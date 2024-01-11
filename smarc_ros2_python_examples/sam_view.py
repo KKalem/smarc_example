@@ -42,21 +42,40 @@ class SAMView:
         self._lcg_msg = PercentStamped()
 
 
-    def set_u(self, u):
+    def set_control_inputs(self,
+                           rpm = None,
+                           thruster_horizontal_radians = None,
+                           thruster_vertical_radians = None,
+                           vbs = None,
+                           lcg = None):
         """
-        this should be called by a model to set the control inputs
+        This should be called by a model to set the control inputs
         and can be done arbitrarily frequently
         """
-        # check for validity and limits here if needed
+        # check for validity and limits here as needed
         # also for types, like how rpms are ints but a control model
         # would likely give out floats and that setting radians=0
         # should make sure those ints become 0.0 floats
-        self._t1_msg.rpm = int(u[0])
-        self._t2_msg.rpm = int(u[0])
-        self._vec_msg.thruster_horizontal_radians = float(u[1])
-        self._vec_msg.thruster_vertical_radians = float(u[2])
-        self._vbs_msg.value = float(u[3])
-        self._lcg_msg.value = float(u[4])
+        if(rpm):
+            self._t1_msg.rpm = int(rpm)
+            self._t2_msg.rpm = int(rpm)
+
+        if(thruster_horizontal_radians):
+            assert abs(thruster_horizontal_radians) < 3.15, "Thruster horizontal RADIANS, not degrees!"
+            self._vec_msg.thruster_horizontal_radians = float(thruster_horizontal_radians)
+
+        if(thruster_vertical_radians):
+            assert abs(thruster_vertical_radians) < 3.15, "Thruster vertical RADIANS, not degrees!"
+            self._vec_msg.thruster_vertical_radians = float(thruster_vertical_radians)
+
+        if(vbs):
+            assert (vbs>=0 and vbs<=1), "VBS input must be 0<=vbs<=1"
+            self._vbs_msg.value = float(vbs)
+
+        if(lcg):
+            assert (lcg>=0 and lcg<=1), "LCG input must be 0<=vbs<=1"
+            self._lcg_msg.value = float(lcg)
+
         # you could also keep track of all the inputs given, record them,
         # write to file, even publish a different topic for debugging purposes
         # _lots of LOOKING, from the VIEW class_
@@ -64,9 +83,13 @@ class SAMView:
 
     def update(self):
         """
-        the actual publishing is done here for all the topics
+        The actual publishing is done here for all the topics
         you can call this as fast the receiver needs the data repeated
-        independently of the rate in which said data is updated
+        independently of the rate in which said data is updated.
+
+        Method is called "update" rather than "publish" because maybe
+        another view would change numbers on a display and having a list
+        of views to call "update" on would make life easy.
         """
         self._vbs_pub.publish(self._vbs_msg)
         self._lcg_pub.publish(self._lcg_msg)
