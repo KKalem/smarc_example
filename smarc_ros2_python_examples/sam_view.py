@@ -69,11 +69,11 @@ class SAMView:
             self._vec_msg.thruster_vertical_radians = float(thruster_vertical_radians)
 
         if(vbs):
-            assert (vbs>=0 and vbs<=1), "VBS input must be 0<=vbs<=1"
+            assert (vbs>=0 and vbs<=100), "VBS input must be 0<=vbs<=1"
             self._vbs_msg.value = float(vbs)
 
         if(lcg):
-            assert (lcg>=0 and lcg<=1), "LCG input must be 0<=vbs<=1"
+            assert (lcg>=0 and lcg<=100), "LCG input must be 0<=lcg<=1"
             self._lcg_msg.value = float(lcg)
 
         # you could also keep track of all the inputs given, record them,
@@ -122,7 +122,7 @@ if __name__ == "__main__":
         # the new rate objects dont auto-spin, they just sleep
         # this is a general trend in ros2, most things do _one thing_
         # and dont do much else implicitly.
-        view.set_u(us[i])
+        view.set_control_inputs(us[i])
         view.update()
         node.get_logger().info(f"u = {us[i]}")
 
