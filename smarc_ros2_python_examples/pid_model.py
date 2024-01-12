@@ -3,255 +3,151 @@
 from sam_view import SAMView
 
 import numpy as np
-import math
 
-class PIDModel():
+def vec2_directed_angle(v1, v2):
     """
-    This is more or less a verbatim copy of the WaypointFollowingController
-    from https://github.com/DoernerD/visual_feedback/blob/velocity_control/src/WaypointFollowingController.py
-    and probably needs some modification before it works proper. /Ozer
-    
-    But just the parts that handle an abstract state and produce an abstract control input, no ROS stuff.
+    returns the shortest angle from v1 to v2 in radians.
+    v1 + angle = v2.
+
+    positive value means ccw rotation from v1 to v2.
+    negative value means cw.
+
+    v1, v2 can be (N,2)
     """
-    def __init__(self,
-                 loop_freq: int
-                 ):
+    v1 = np.array(np.atleast_2d(v1))
+    v2 = np.array(np.atleast_2d(v2))
+    assert v1.shape == v2.shape
 
-        self.loop_freq = loop_freq
+    x1s = v1[:,0]
+    x2s = v2[:,0]
+    y1s = v1[:,1]
+    y2s = v2[:,1]
 
-        # Init
-        self.state_estimated = np.array([0., 0., 0.1, 1., 0., 0.])
-        self.x_ref = 0.
-        self.y_ref = 0.
-        self.z_ref = 0.
-        self.roll_ref = 0.
-        self.pitch_ref = 0.
-        self.yaw_ref = 0.
-        self.ref = np.array([self.x_ref, self.y_ref, self.z_ref, self.roll_ref, self.pitch_ref, self.yaw_ref])
+    dots = x1s*x2s + y1s*y2s
+    dets = x1s*y2s - y1s*x2s
 
-        self.ref_odom = np.array([0., 0., 0., 0., 0., 0.])
+    angles = np.arctan2(dets,dots)
 
-        self.velocity = np.array([0., 0., 0., 0., 0., 0.])
-        self.vel_x_ref = 0.
-        self.vel_y_ref = 0.
-        self.vel_z_ref = 0.
-        self.vel_roll_ref = 0.
-        self.vel_pitch_ref = 0.
-        self.vel_yaw_ref = 0.
-        self.vel_ref = np.array([self.vel_x_ref, self.vel_y_ref, self.vel_z_ref, self.vel_roll_ref, self.vel_pitch_ref, self.vel_yaw_ref])
+    N,_ = v1.shape
+    if N == 1:
+        return angles[0]
+    else:
+        return angles
 
-        # Control Gains
-        # u = [thruster, vec (horizontal), vec (vertical), vbs, lcg]
-        # x = [x, y, z, roll, pitch, yaw]
-        self.Kp = np.array([2000, 5, 5, 10, 70])      # P control gain
-        self.Ki = np.array([10., 0.1, 0.1, 0.001, 0.5])    # I control gain
-        self.Kd = np.array([1., 1., 1., 0., 0.])    # D control gain
-        self.Kaw = np.array([1., 1., 1., 0., 6.])   # Anti windup gain
+class PIDControl:
+    """
+    From:  https://github.com/DoernerD/Python_Control/blob/main/src/PID_control.py
+    To simplify the PIDModel by using this.
+    """
+    def __init__(self, Kp=1.0, Ki=0.1, Kd=2.0):
+        self._Kp = Kp
+        self._Ki = Ki
+        self._Kd = Kd
+        self.reset()
 
-        self.eps_depth = 0.6 # offset for depth control
-        self.eps_pitch = 0.3 # offset for pitch control
+    def get_control(self, x, x_ref, dt:float):
+        """
+        Returns the control input to the system given its current state x, its desired state x_ref
+        and the time since last update dt in seconds.
+        x and x_ref should be arithmetic-able objects like ndarrays or single floats
+        """
+        self._error_prev = self._error
+        self._error = x_ref - x
+        self._integral = self._integral + self._error*dt
+        self._derivative = (self._error - self._error_prev)/dt
 
-        self.error = np.array([0., 0., 0., 0., 0., 0.])
-        self.error_prev = np.array([0., 0., 0., 0., 0., 0.])
-        self.integral = np.array([0., 0., 0., 0., 0., 0.])
+        u = self._Kp*self._error + self._Ki*self._integral + self._Kd*self._derivative
 
-        self.distance_error = 0.
+        return u, self._error
 
-        self.heading_angle_error = 0.
-        self.heading_angle_error_integral = 0.
-        self.heading_angle_error_prev = 0.
-        self.heading_angle_error_deriv = 0.
-
-        self.error_velocity = 0.
-        self.error_velocity_integral = 0.
-        self.error_velocity_prev = 0.
-        self.error_velocity_deriv = 0.
-
-        self.stop_radius = 0.2
-        self.rpm_limit = 230.   # hard rpm limit for safety in the tank
-
-        # Neutral actuator inputs
-        self.thruster_neutral = 0
-        self.horizontal_thrust_vector_neutral = 0.
-        self.vertical_thrust_vector_neutral = 0.
-        self.vbs_neutral = 57.
-        self.lcg_neutral = 80.
-
-        self.u_neutral = np.array([self.thruster_neutral,
-                                  self.horizontal_thrust_vector_neutral,
-                                  self.vertical_thrust_vector_neutral,
-                                  self.vbs_neutral,
-                                  self.lcg_neutral])
-
-        self.anti_windup_diff = np.array([0., 0., 0., 0., 0.])
-        self.anti_windup_diff_integral = np.array([0., 0., 0., 0., 0.])
-
-        self.limit_output_cnt = 0 
+    def reset(self):
+        self._error = 0.0
+        self._integral = 0.0
+        self._derivative = 0.0
+        self._error_prev = 0.0
 
 
-    def set_pose(self,
-                 x:float, y:float, z:float,
-                 roll:float, pitch:float, yaw:float):
+class PIDModel:
+    """
+    A simple PID heading and thrust controller intended for SAM
+    to demonstrate a clean example
+    """
+    def __init__(self, init_posi=[0.0,0.0], init_yaw=0,
+                 max_rpm=1000.0, max_thrust_angle=0.15):
+        self._posi = np.array(init_posi)
+        self._yaw = float(init_yaw)
+        self._max_rpm = float(max_rpm)
+        self._max_thrust_angle = float(max_thrust_angle)
+
+        self._yaw_pid = PIDControl()
+        self._thrust_pid = PIDControl()
+
+
+    def set_pose(self, posi, yaw:float):
         """
         Set the estimated pose of the vehicle.
-        x,y,z in meters.
-        roll, pitch, yaw in radians.
+        posi=[x,y] in meters.
+        yaw in radians, CCW from the x axis
         """
-        # dont create lists, update the array...
-        self.state_estimated[0] = x
-        self.state_estimated[1] = y
-        self.state_estimated[2] = z
-        self.state_estimated[3] = roll
-        self.state_estimated[4] = pitch
-        self.state_estimated[5] = yaw
-
-    def set_velocity(self,
-                     lx:float, ly:float, lz:float,
-                     ax:float, ay:float, az:float):
-        """
-        Set the velocity of the vehicle.
-        lx, ly, lz are linear components and ax, ay, az are angular components
-        in m/s and radians/s respectively.
-        """
-        self.velocity[0] = lx
-        self.velocity[1] = ly
-        self.velocity[2] = lz
-        self.velocity[3] = ax
-        self.velocity[4] = ay
-        self.velocity[5] = az
+        self._posi = np.array(posi)
+        self._yaw = float(yaw)
 
 
-    def set_waypoint(self,
-                     x:float, y:float, z:float,
-                     roll:float, pitch:float, yaw:float,
-                     lx:float):
+    def set_waypoint(self, wp):
         """
         Set the goal waypoint to reach in absolute coordinates, in the same
         frame of reference as the vehicle pose.
-        x,y,z for position
-        roll, pitch, yaw for orientation at given position
-        lx for forward speed at given pose
         """
-        self.ref[0] = x - self.state_estimated[0]
-        self.ref[1] = y - self.state_estimated[1]
-        # We don't transform the depth and the pitch
-        # since we compare them to sensor data and 
-        # therefore need absolute values. 
-        self.ref[2] = z
-
-        # Roll
-        # self.ref[3] = roll
-        # Pitch
-        # FIXME: Something is off with the sign and potentially the controller /David
-        self.ref[4] = 0.0 # pitch
-        # Yaw
-        # self.ref[5] = yaw
-
-        # Velocity
-        self.vel_ref[0] = lx
+        self._wp = np.array(wp)
+        # Also reset the pid controllers since they shouldn't retain
+        # any errors from a past WP
+        self._yaw_pid.reset()
+        self._thrust_pid.reset()
 
 
-    def calculate_anti_windup_integral(self):
+    def _signed_normalize_u(self, val, max):
+        return np.sign(val) * min([np.abs(val), max])
+
+
+    def compute_control_action(self, dt:float):
         """
-        Calculate the anti windup integral
+        Returns the desired horizontal thruster angle in radians and thrust in RPMs 
+        according to simple PID heading and thrust control towards the set waypoint.
         """
-        self.anti_windup_diff_integral += (self.anti_windup_diff) * (1/self.loop_freq)
+        # The vector towards the WP from Position
+        position_error = self._wp - self._posi
+        
+        # Make a normalized vector out of the yaw angle
+        yaw_vector = np.array([np.cos(self._yaw), np.sin(self._yaw)])
+        
+        # Difference between the error vector and our current yaw vector
+        # This is a signed angle in radians between -pi, pi
+        yaw_error = vec2_directed_angle(yaw_vector, position_error)
+        # Similarly, distance to point for thrusting 
+        distance_error = np.linalg.norm(position_error)
+
+        # Since angles are weird to work with, we have computed
+        # our own error, and give that as the "current state" to the PID
+        # with the "target state" at 0, since if error=0 we good.
+        # This way, the PID object need not have separate handling of angles!
+        yaw_u,_ = self._yaw_pid.get_control(yaw_error, 0, dt)
+        # PID gives a unitless control input, we need radians
+        # normalize to -pi,pi
+        # also swap it around because of the trick we pulled above, we want the control
+        # inputs to be positive when it is "forward"
+        yaw_u *= -1
+        yaw_rads = self._signed_normalize_u(yaw_u, self._max_thrust_angle)
+        
+        # Similary, since we separated the yaw and thrust controls,
+        # we should just tell the PID to 0-out the distance error.
+        thrust_u,_ = self._thrust_pid.get_control(distance_error, 0, dt)
+        thrust_u *= -1
+        # also normalize the thrust to some useful RPMs
+        thrust_rpms = self._signed_normalize_u(thrust_u, self._max_rpm)
+
+        return yaw_rads, thrust_rpms
 
 
-    def calculate_velocity_control_action(self, velocity_desired):
-        """
-        Returns RPM based on the desired velocity in x direction.
-        """
-        u = 250
-
-        # self.error_velocity_prev = self.error_velocity
-        # self.error_velocity = velocity_desired - self.velocity[0]
-        # self.error_velocity_integral += self.error_velocity * (1/self.loop_freq)
-        # self.error_velocity_deriv = (self.error_velocity - self.error_velocity_prev) * self.loop_freq
-
-        # u = self.Kp[0]*self.error_velocity + self.Ki[0]*(self.error_velocity_integral - self.anti_windup_diff_integral[0]) + self.Kd[0]*self.error_velocity_deriv
-
-        return u
-
-
-    def compute_control_action(self):
-        """
-        Sliding Mode Control for Depth First control.
-        The control structure is as follows:
-            The error is used for pitch and depth control.
-            The heading angle is used for horizontal control and calculated separately.
-            The distance to the target is used for forward and backward control.
-        u = [thruster, vec (horizontal), vec (vertical), vbs, lcg]
-        x = [x, y, z, roll, pitch, yaw]
-        """
-
-        u = np.array([self.thruster_neutral,
-                        self.horizontal_thrust_vector_neutral,
-                        self.vertical_thrust_vector_neutral,
-                        self.vbs_neutral,
-                        self.lcg_neutral])
-
-        self.error_prev = self.error
-        self.error = self.ref - self.state_estimated
-
-        # Depth is always negative, which is why we change the signs on the
-        # depth error. Then we can keep the remainder of the control structure
-        self.error[2] = -self.error[2]
-
-        # Anti windup integral is calculated separately, because
-        # dim(e) != dim(u).
-        self.calculate_anti_windup_integral()
-
-        self.integral += self.error * (1/self.loop_freq)
-        self.deriv = (self.error - self.error_prev) * self.loop_freq
-
-        # Calculate distance to reference pose
-        # Workaround bc np.sign(0) = 0
-        if np.sign(self.ref[0]) == 0:
-            distance_sign = 1
-        else:
-            distance_sign = np.sign(self.ref[0])
-
-        self.distance_error = np.sqrt(self.ref[0]**2 + self.ref[1]**2) * distance_sign
-
-        # When on navigation plane
-        if ((np.abs(self.state_estimated[2] - self.ref[2]) <= self.eps_depth)\
-                and (np.abs(self.state_estimated[4] - self.ref[4]) <= self.eps_pitch)):
-
-            # print("velocity control")
-
-            # Compute heading angle
-            self.heading_angle = math.atan2(self.ref[1], self.ref[0])
-            self.heading_angle_error_prev = self.heading_angle_error
-            self.heading_angle_error = 0 - self.heading_angle
-            self.heading_angle_error_integral += self.heading_angle_error * (1/self.loop_freq)
-            self.heading_angle_error_deriv = (self.heading_angle_error - self.heading_angle_error_prev) * self.loop_freq
-
-            
-            u[0] = 0
-            # FIXME: Check the u[1] calculation. Seems sketchy with the flipping and esp. with the integral when you change signs. Not good!
-            if self.distance_error > 1: #self.stop_radius:
-                u[0] = self.calculate_velocity_control_action(self.vel_ref[0])
-
-                u[1] = self.Kp[1]*self.heading_angle + self.Ki[1]*(self.heading_angle_error_integral - self.anti_windup_diff_integral[1]) + self.Kd[1]*self.heading_angle_error_deriv   # PID control vectoring (horizontal)
-                u[1] = -u[1] # FIXME: This is a hack to get the sign right. This is due to the conversion from ENU to NED for the thruster commands
-
-            elif self.distance_error < -0.2:    # FIXME: 1m past the waypoint is too much for now to actually stop. Once we have velocity control, we can change it back again.
-                u[0] = self.calculate_velocity_control_action(-0.5*self.vel_ref[0])
-                u[0] = -250
-
-                self.heading_angle_scaled = np.sign(self.heading_angle) * (np.pi - np.abs(self.heading_angle))
-
-                u[1] = -(self.Kp[1]*self.heading_angle_scaled + (self.Ki[1]*(self.heading_angle_error_integral - self.anti_windup_diff_integral[1])) + self.Kd[1]*self.heading_angle_error_deriv)   # PID control vectoring (horizontal)
-                u[1] = -u[1] # FIXME: This is a hack to get the sign right. This is due to the conversion from ENU to NED for the thruster commands
-
-            else:
-                u[0] = 0 #self.calculate_velocity_control_action(0)
-
-        u[3] = self.Kp[3]*self.error[2] + self.vbs_neutral + self.Ki[3]*(self.integral[2] - self.anti_windup_diff_integral[3]) + self.Kd[3]*self.deriv[2]   # PID control vbs
-        u[4] = self.Kp[4]*self.error[4] + self.lcg_neutral + self.Ki[4]*(self.integral[4] - self.anti_windup_diff_integral[4]) + self.Kd[4]*self.deriv[4]   # PID control lcg
-
-        return u
 
 
 
@@ -266,17 +162,21 @@ if __name__ == "__main__":
 
     view = SAMView(node)
 
-    loop_freq = 10
-    model = PIDModel(loop_freq)
+    model = PIDModel()
 
     # just a simple waypoint dead-ahead
-    model.set_waypoint(10,0,0,0,0,0,0)
+    model.set_waypoint([0,10])
 
-    rate = node.create_rate(loop_freq)
+    loop_rate = 10
+    rate = node.create_rate(loop_rate)
+
+    # This will spam more-or-less the same stuff because the vehicle never moves according to control
+    # there is no simulation happening here!
     while(rclpy.ok()):
-        u = model.compute_control_action()
-        node.get_logger().info(f"u = {u}")
-        view.set_control_inputs(*u)
+        yaw_u, thrust_u = model.compute_control_action(1/loop_rate)
+        node.get_logger().info(f"yaw_u = {yaw_u},   thrust_u = {thrust_u}")
+        view.set_control_inputs(thruster_horizontal_radians= yaw_u,
+                                rpm = thrust_u)
         view.update()
 
         rclpy.spin_once(node)

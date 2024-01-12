@@ -61,11 +61,11 @@ class SAMView:
             self._t2_msg.rpm = int(rpm)
 
         if(thruster_horizontal_radians):
-            assert abs(thruster_horizontal_radians) < 3.15, "Thruster horizontal RADIANS, not degrees!"
+            assert abs(thruster_horizontal_radians) < 3.15, "Thruster horizontal RADIANS, not degrees! Normalize your stuff!"
             self._vec_msg.thruster_horizontal_radians = float(thruster_horizontal_radians)
 
         if(thruster_vertical_radians):
-            assert abs(thruster_vertical_radians) < 3.15, "Thruster vertical RADIANS, not degrees!"
+            assert abs(thruster_vertical_radians) < 3.15, "Thruster vertical RADIANS, not degrees! Normalize your stuff!"
             self._vec_msg.thruster_vertical_radians = float(thruster_vertical_radians)
 
         if(vbs):
