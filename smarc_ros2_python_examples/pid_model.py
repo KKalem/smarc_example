@@ -113,6 +113,11 @@ class PIDModel:
         """
         Returns the desired horizontal thruster angle in radians and thrust in RPMs 
         according to simple PID heading and thrust control towards the set waypoint.
+
+        This is not a good controller! Do not use this on the real things, ever!
+        The point is not this controller, it is how its structured as a code object.
+        Someone that actually knows how to control things should write something 
+        that works instead of this ;)
         """
         # The vector towards the WP from Position
         position_error = self._wp - self._posi

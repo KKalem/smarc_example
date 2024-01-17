@@ -3,6 +3,8 @@
 import rclpy
 import sys
 
+from rclpy.node import Node
+
 from smarc_msgs.msg import ThrusterRPM
 from sam_msgs.msg import PercentStamped, ThrusterAngles
 
@@ -17,13 +19,16 @@ class SAMView:
     If needed, you can extend _this_ class with one that also writes the control
     inputs to file, to plot or something as well!
     """
-    def __init__(self, node):
+    def __init__(self, node: Node, default_robot_name="sam0"):
         # bunch of topics to publish to
-        vbs_topic = node.declare_parameter("vbs_topic", "core/vbs_cmd").value
-        lcg_topic = node.declare_parameter("lcg_topic", "core/lcg_cmd").value
-        rpm1_topic= node.declare_parameter("rpm1_topic", "core/thruster1_cmd").value
-        rpm2_topic= node.declare_parameter("rpm2_topic", "core/thruster2_cmd").value
-        thrust_vector_topic = node.declare_parameter("thrust_vector_cmd_topic", "core/thrust_vector_cmd").value
+        # TODO read these strings from a global config file.
+        def defaultize(topic: str):
+            return f"/{default_robot_name}/{topic}"
+        vbs_topic = node.declare_parameter("vbs_topic", defaultize("core/vbs_cmd")).value
+        lcg_topic = node.declare_parameter("lcg_topic", defaultize("core/lcg_cmd")).value
+        rpm1_topic= node.declare_parameter("rpm1_topic", defaultize("core/thruster1_cmd")).value
+        rpm2_topic= node.declare_parameter("rpm2_topic", defaultize("core/thruster2_cmd")).value
+        thrust_vector_topic = node.declare_parameter("thrust_vector_cmd_topic", defaultize("core/thrust_vector_cmd")).value
 
         # lets actually use private variable notations this time around eh?
         # ROS2 introduces a QoS setting to publishing and subsciribing(optional)
@@ -116,12 +121,20 @@ if __name__ == "__main__":
     # could have also created a timer object instead of
     # doing the while loop, but this loop is a very common
     # thing we used to do in ros1 that an example is nice to have
+    ###############################################################
+    # see controller_controller.py for the better way with timers.
+    ###############################################################
     rate = node.create_rate(0.5)
     i = 0
     while(rclpy.ok()):
         # the new rate objects dont auto-spin, they just sleep
         # this is a general trend in ros2, most things do _one thing_
         # and dont do much else implicitly.
+
+        # see controller_controller.py for the better way of doing the
+        # main loop here! I'm using this here as an example of what ros1 looks
+        # like in ros2-world.
+
         view.set_control_inputs(us[i])
         view.update()
         node.get_logger().info(f"u = {us[i]}")
